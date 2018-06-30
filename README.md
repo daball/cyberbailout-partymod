@@ -31,7 +31,7 @@ In the event of a graceful application error, the response will appear different
 
 ### setup/isSetupMode
 
-| | |
+| REST | Characteristic |
 | - | - |
 | Method | `GET` |
 | Resource | `/api/v1/setup/isSetupMode` |
@@ -42,17 +42,19 @@ Checks the current operational mode of the PartyMod badge firmware. When in Setu
 
 ### setup/setWiFiAP
 
-Method: `POST`
-Resource: `/api/v1/setup/setWiFiAP`
-Query String: (none)
-Body:
+| REST | Characteristic |
+| - | - |
+| Method | `POST` |
+| Resource | `/api/v1/setup/setWiFiAP` |
+| Query String | (none) |
+| Return | `Boolean` |
+| Form Body | |
 
 	{
 		"ssid": "SSID",
 		"key": "securitypassphrase"
 	}
 
-Return Type: `Boolean`
 
 When Setup Mode is not activated, this function will always return `false`. When Setup Mode is activated automatically by the device, this function will allow you to set the WiFi AP configuration without using PlatformIO tools.
 

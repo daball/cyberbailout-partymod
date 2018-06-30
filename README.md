@@ -31,10 +31,12 @@ In the event of a graceful application error, the response will appear different
 
 ### setup/isSetupMode
 
-Method: `GET`
-Resource: `/api/v1/setup/isSetupMode`
-Query String: (none)
-Return Type: `Boolean`
+| | |
+| - | - |
+| Method | `GET` |
+| Resource | `/api/v1/setup/isSetupMode` |
+| Query String | (none) |
+| Return Type | `Boolean` |
 
 Checks the current operational mode of the PartyMod badge firmware. When in Setup Mode, the only other REST API function that will work is `setWiFiAP` function.
 

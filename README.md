@@ -1,5 +1,60 @@
-MACCDC 2016 Badge
-=================
+# Get Ready to PartyMod
+
+The MACCDC 2016 Operation Cyber Bailout competition was a blast! Everyone in the competition received the MACCDC 2016 badge, which was the coolest piece of tech I've ever been gifted. It worked with the firmware designed for the competition. Afterwards, any additional functionality was homebrew, on embedded tech. Pure hacker stuff, fun!
+
+The factory firmware they gave us has a Setup Mode. You can enter Setup Mode (among other ways) by letting the Wi-Fi connection attempt to timeout and then connecting to the AP listed on the display. From there, you can flash the firmware using the OTA setup instructions below in the original documentation. PartyMod extends this Setup Mode functionality to the web configuration interface.
+
+Once you have flashed the device with the PartyMod firmware, then you can interact with the device using either the embedded web service (REST API) or using the embedded web site, a React SPA.
+
+## Embedded Web Site
+
+You can access the web site by navigating to the IP address on the display. Just prepend the IP address with http:// in your favorite web browser (which is **NOT** Internet Explorer).
+
+## Embedded Web Service
+
+PartyMod exposes the entire functionality of the MACCDC 2016 badge over REST API endpoints.
+
+Each response will be wrapped in a response object, which looks roughly like:
+
+    {
+		status: "OK",
+		body: any // check the REST API function return type
+	}
+
+In the event of a graceful application error, the response will appear differently:
+
+	{
+		status: "Error",
+		body: any, //probably undefined
+		error: any //probably a string
+	}
+
+### setup/isSetupMode
+
+Method: `GET`
+Resource: `/api/v1/setup/isSetupMode`
+Query String: (none)
+Return Type: `Boolean`
+
+Checks the current operational mode of the PartyMod badge firmware. When in Setup Mode, the only other REST API function that will work is `setWiFiAP` function.
+
+### setup/setWiFiAP
+
+Method: `POST`
+Resource: `/api/v1/setup/setWiFiAP`
+Query String: (none)
+Body:
+
+	{
+		"ssid": "SSID",
+		"key": "securitypassphrase"
+	}
+
+Return Type: `Boolean`
+
+When Setup Mode is not activated, this function will always return `false`. When Setup Mode is activated automatically by the device, this function will allow you to set the WiFi AP configuration without using PlatformIO tools.
+
+# MACCDC 2016 Badge
 
 # Badge Firmware
 
@@ -33,7 +88,7 @@ This method must be used for the initial flash, or if OTA functionality is not c
 
 The cable must be attached in a specific orientation. The outermost wires are typically green and black; labels indicating which color should go on which side of the connector are etched into the bottom of the badge. Connect the cable to the badge in the correct orientation and to an available USB port on your computer. Some systems may require drivers to work with the cable to make the serial port available; refer to the manufacturers instructions for more details. If you have purchased the cable above, there are instructions available [here](https://learn.sparkfun.com/tutorials/how-to-install-ftdi-drivers).
 
-The serial bootloader is an in-built function of the ESP8266 but it must be manually triggered using the buttons on the board. If the LED on the board is glowing brightly red upon connecting the FTDI cable, the system is in an intermittent state and should be power cycled by removing and re-inserting the cable, and toggling the power switch. If the LED is already glowing dimly red, the following instructions MUST be followed anyways. 
+The serial bootloader is an in-built function of the ESP8266 but it must be manually triggered using the buttons on the board. If the LED on the board is glowing brightly red upon connecting the FTDI cable, the system is in an intermittent state and should be power cycled by removing and re-inserting the cable, and toggling the power switch. If the LED is already glowing dimly red, the following instructions MUST be followed anyways.
 
 Each time you want to flash the board, it must FIRST be put into bootloader mode by the following process:
 
@@ -49,13 +104,13 @@ The stock firmware uses the SPIFFS filesystem feature of the ESP8266. This secti
 To upload the SPIFFS image, run the following in a terminal:
 
     platformio run -t uploadfs
-    
+
 While firmware is flashing, a blue LED on the board will flash quickly a few times, turn off, and then flash continuously while the image is written. When the led stops flashing, the board will automatically reset (exiting bootloader mode) and start up the new image.
 
 Once the SPIFFS image has been flashed, the firmware itself must be flashed. Make sure the board is running in bootloader mode, and run the following in a terminal:
 
     platformio run -t upload
-    
+
 Once these two steps have been completed, the firmware has been fully flashed to the board.
 
 ### OTA Update
@@ -73,11 +128,11 @@ OTA updates **DO NOT** require and you **SHOULD NOT** put the ESP into bootloade
 To upload the SPIFFS image, run the following:
 
     platformio run -t uploadfs --upload-port <BADGE_IP>
-    
+
 To upload the firmware image, run the following:
 
     platformio run -t upload --upload-port <BADGE_IP>
-    
+
 Since this process can ONLY be used AFTER the first flash (true for all badges), the SPIFFS image need / should only be run if files inside of [data](data) have been added, deleted or modified. The firmware can be uploaded anytime the system has booted fully (has a correct configuration) and a <BADGE_IP> is set.
 
 Uploading OTA is significantly faster than the serial method and is recommended if possible. Progress will be shown in the terminal and on the screen in the form of an OTA update message. When OTA updating is complete, the badge will automatically reboot and use the new firmware or SPIFFS image.
@@ -92,7 +147,8 @@ The code has been marked with sections that should be retained or can be removed
 	* [Adafruit GFX Library](https://github.com/adafruit/Adafruit-GFX-Library)
 	* [Adafruit SSD1306 Library](https://github.com/adafruit/Adafruit_SSD1306)
 
-# Configuring the badge Network <a name="network"></a>
+# Configuring the badge Network
+<a name="network"></a>
 
 The [data/wifi.json](data/wifi.json) file controls which network the badge will attempt to connect to. The structure is as follows:
 

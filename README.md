@@ -1,5 +1,11 @@
 # Get Ready to PartyMod
 
+| Project Status |
+| -------------- |
+| `Deferred`     |
+
+I bricked my badge from OTA updates. I need to order a FTDI cable to resume development. Seems to be a glitch when webServer.begin() is called. Messes up the whole loop(). Do not flash this version of the firmware. You will brick the OTA updates.
+
 The MACCDC 2016 Operation Cyber Bailout competition was a blast! Everyone in the competition received the MACCDC 2016 badge, which was the coolest piece of tech I've ever been gifted. It worked with the firmware designed for the competition. Afterwards, any additional functionality was homebrew, on embedded tech. Pure hacker stuff, fun!
 
 The factory firmware they gave us has a Setup Mode. You can enter Setup Mode (among other ways) by letting the Wi-Fi connection attempt to timeout and then connecting to the AP listed on the display. From there, you can flash the firmware using the OTA setup instructions below in the original documentation. PartyMod extends this Setup Mode functionality to the web configuration interface.
@@ -18,14 +24,14 @@ Each response will be wrapped in a response object, which looks roughly like:
 
     {
 		status: "OK",
-		body: any // check the REST API function return type
+		data: any // check the REST API function return type
 	}
 
 In the event of a graceful application error, the response will appear differently:
 
 	{
 		status: "Error",
-		body: any, //probably undefined
+		data: any, //probably undefined
 		error: any //probably a string
 	}
 

@@ -1,11 +1,15 @@
 #include <Wire.h>
 #include <FS.h>
 #include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <Adafruit_SSD1306.h>
 #include <NeoPixelBus.h>
+#include <NeoPixelAnimator.h>
 #include <ArduinoOTA.h>
 #include <ArduinoJson.h>
+#include <Ethernet.h>
+#include <SPI.h>
 #include <WiFiUdp.h>
 
 // -------------------- CONFIGURATION --------------------
@@ -36,8 +40,27 @@ const IPAddress NET_SERVER ( 10,  13,  37, 100);
 const IPAddress NET_GROUP  (239,  13,  37,   1);
 
 // -------------------- CONFIGURATION --------------------
+const uint16_t PixelCount = 8; // make sure to set this to the number of pixels in your strip
+const uint16_t PixelPin = 2;  // make sure to set this to the correct pin, ignored for Esp8266
+const uint16_t AnimCount = PixelCount / 5 * 2 + 1; // we only need enough animations for the tail and one extra
 
-typedef unsigned long ulong;
+const uint16_t PixelFadeDuration = 100; // half of a second
+// one second divide by the number of pixels = loop once a second
+const uint16_t NextPixelMoveDuration = 1000 / PixelCount; // how fast we move through the pixels
+
+NeoGamma<NeoGammaTableMethod> colorGamma; // for any fade animations, best to correct gamma
+
+struct MyAnimationState
+{
+    RgbColor StartingColor;
+    RgbColor EndingColor;
+    uint16_t IndexPixel;
+};
+
+NeoPixelAnimator animations(AnimCount); // NeoPixel animation management object
+MyAnimationState animationState[AnimCount];
+uint16_t frontPixel = 0;  // the front of the loop
+RgbColor frontColor;  // the color at the front of the loop
 
 // ---------- BADGE GLOBALS - CAN BE REMOVED ----------
 
@@ -52,10 +75,12 @@ typedef struct textscroll {
     int16_t offset;
 } textscroll_t;
 
+const int COLORS_COUNT = 3;
 typedef struct badge {
     uint8_t      team;
     uint8_t      id;
     RgbColor     color;
+    // RgbColor     colors[COLORS_COUNT];
     char         name[256];
     textscroll_t scroll;
 } badge_t;
@@ -96,7 +121,7 @@ char  temp[2048];
 // ---------- OTA FUNCTIONS - DO NOT MODIFY ----------
 
 Adafruit_SSD1306 oled(16);
-NeoPixelBus<NeoGrbFeature, NeoEsp8266Uart800KbpsMethod> pixel(8, 0);
+NeoPixelBus<NeoGrbFeature, NeoEsp8266Uart800KbpsMethod> pixel(PixelCount, 0);
 WiFiUDP udp;
 
 void otaStart() {
@@ -133,7 +158,7 @@ void enableSetupMode(const char* msg) {
 
 void runSetupMode() {
     setupMode = true;
-    
+
     // Disconnect from any existing network
     WiFi.disconnect();
     delay(10);
@@ -163,7 +188,7 @@ void runSetupMode() {
 void updateName(const char* name) {
     // Either copy the name or the default name
     strncpy(
-        badge.name, 
+        badge.name,
         (name != NULL) ? name : STR_NAME_DEFAULT,
         sizeof(badge.name)-2
     );
@@ -189,7 +214,7 @@ void saveConfig() {
     if((file = SPIFFS.open(STR_FILE_CONF, "w"))) {
         StaticJsonBuffer<JSON_BUFF_SIZE> buff;
         JsonObject& root = buff.createObject();
-        
+
         root["team"] = badge.team;
         root["id"  ] = badge.id;
         JsonArray& color = root.createNestedArray("color");
@@ -202,7 +227,7 @@ void saveConfig() {
         strncpy(name, badge.name, size);
         name[size] = '\0';
         root["name"] = name;
-        
+
         size = root.prettyPrintTo(temp, sizeof(temp)-1);
         temp[size] = '\0';
         file.print(temp);
@@ -214,15 +239,15 @@ void renderRSSI() {
     int rssi = WiFi.RSSI();
     oled.fillRect(114, 0, 14, 8, BLACK);
 
-    if(rssi > SIG_LOW ) 
+    if(rssi > SIG_LOW )
          oled.fillRect(114, 5, 4, 3, WHITE);
     else oled.drawRect(114, 5, 4, 3, WHITE);
 
-    if(rssi > SIG_MED ) 
+    if(rssi > SIG_MED )
          oled.fillRect(119, 3, 4, 5, WHITE);
     else oled.drawRect(119, 3, 4, 5, WHITE);
 
-    if(rssi > SIG_HIGH) 
+    if(rssi > SIG_HIGH)
          oled.fillRect(124, 0, 4, 8, WHITE);
     else oled.drawRect(124, 0, 4, 8, WHITE);
 }
@@ -235,7 +260,7 @@ void renderName() {
     oled.display();
 
     badge.scroll.offset -= 3;
-    if(badge.scroll.offset < badge.scroll.length) 
+    if(badge.scroll.offset < badge.scroll.length)
         badge.scroll.offset = SSD1306_LCDWIDTH;
 }
 
@@ -247,19 +272,23 @@ void renderTeam() {
     oled.display();
 }
 
-void renderColor() {
-    pixel.ClearTo((flash.count & 1) ? COLOR_OFF : *(flash.color));
-    pixel.Show();
-    if(flash.count >  0) flash.count--;
-    if(flash.count == 0) flash.color = &(badge.color);
-}
+// void renderColor() {
+//     pixel.ClearTo((flash.count & 1) ? COLOR_OFF : *(flash.color));
+//     pixel.Show();
+//     if(flash.count >  0) flash.count--;
+//     if(flash.count == 0) flash.color = &(badge.color);
+// }
 
 event_t event[] = {
     {  33, renderName , 0 },
     {  40, renderRSSI , 0 },
     {  40, renderTeam , 0 },
-    { 250, renderColor, 0 }
+//    { 250, renderColor, 0 }
 };
+const int RENDERNAME_EVENT = 0;
+const int RENDERRSSI_EVENT = 1;
+const int RENDERTEAM_EVENT = 2;
+const int RENDERCOLOR_EVENT = 3;
 
 void runEvents() {
     ulong curr = millis();
@@ -271,54 +300,54 @@ void runEvents() {
     }
 }
 
-void handleTeamChange(uint8_t cmd) {
-    uint8_t team = udp.read();
-    uint8_t id   = udp.read();
-    badge.team = constrain(team, 1, BADGE_TEAM_MAX);
-    badge.id   = constrain(id,   1, BADGE_ID_MAX);
-    saveConfig();
-}
+// void handleTeamChange(uint8_t cmd) {
+//     uint8_t team = udp.read();
+//     uint8_t id   = udp.read();
+//     badge.team = constrain(team, 1, BADGE_TEAM_MAX);
+//     badge.id   = constrain(id,   1, BADGE_ID_MAX);
+//     saveConfig();
+// }
 
-void handleColorChange(uint8_t cmd) {
-    uint8_t r = udp.read();
-    uint8_t g = udp.read();
-    uint8_t b = udp.read();
-    badge.color.R = constrain(r, 0, 255);
-    badge.color.G = constrain(g, 0, 255);
-    badge.color.B = constrain(b, 0, 255);
-    saveConfig();
-}
+// void handleColorChange(uint8_t cmd) {
+//     uint8_t r = udp.read();
+//     uint8_t g = udp.read();
+//     uint8_t b = udp.read();
+//     badge.color.R = constrain(r, 0, 255);
+//     badge.color.G = constrain(g, 0, 255);
+//     badge.color.B = constrain(b, 0, 255);
+//     saveConfig();
+// }
 
-void handleTeamColorChange(uint8_t cmd) {
-    uint8_t team = udp.read();
-    team = constrain(team, 1, BADGE_TEAM_MAX);
-    if(team == badge.team) handleColorChange(cmd);
-}
+// void handleTeamColorChange(uint8_t cmd) {
+//     uint8_t team = udp.read();
+//     team = constrain(team, 1, BADGE_TEAM_MAX);
+//     if(team == badge.team) handleColorChange(cmd);
+// }
 
-void handleNameChange(uint8_t cmd) {
-    uint8_t length = std::min(size, sizeof(badge.name)-2);
-    udp.read(name, length);
-    name[length] = '\0';
-    updateName(name);
-    saveConfig();
-}
+// void handleNameChange(uint8_t cmd) {
+//     uint8_t length = std::min(size, sizeof(badge.name)-2);
+//     udp.read(name, length);
+//     name[length] = '\0';
+//     updateName(name);
+//     saveConfig();
+// }
 
-void handleEcho(uint8_t cmd) {
-    if(badge.team > 8) return;
-    udp.beginPacket(NET_SERVER, NET_PORT);
-    udp.write(cmd);
-    udp.write(badge.team);
-    udp.write(badge.id);
-    udp.endPacket();
-    updateColor(&COLOR_ECHO, 2);
-}
+// void handleEcho(uint8_t cmd) {
+//     if(badge.team > 8) return;
+//     udp.beginPacket(NET_SERVER, NET_PORT);
+//     udp.write(cmd);
+//     udp.write(badge.team);
+//     udp.write(badge.id);
+//     udp.endPacket();
+//     updateColor(&COLOR_ECHO, 2);
+// }
 
 handler_f handler[] = {
-    handleTeamChange,
-    handleColorChange,
-    handleTeamColorChange,
-    handleNameChange,
-    handleEcho
+//     handleTeamChange,
+//     handleColorChange,
+//     handleTeamColorChange,
+//     handleNameChange,
+//     handleEcho
 };
 
 void handleRequests() {
@@ -332,6 +361,149 @@ void handleRequests() {
 }
 
 // ---------- BADGE FUNCTIONS - CAN BE REMOVED ----------
+
+// ---------- FADE IN OUT ANIMATION INIT ----------
+void SetRandomSeed()
+{
+    uint32_t seed;
+
+    // random works best with a seed that can use 31 bits
+    // analogRead on a unconnected pin tends toward less than four bits
+    seed = analogRead(0);
+    delay(1);
+
+    for (int shifts = 3; shifts < 31; shifts += 3)
+    {
+        seed ^= analogRead(0) << shifts;
+        delay(1);
+    }
+
+    randomSeed(seed);
+}
+
+void FadeOutAnimUpdate(const AnimationParam& param)
+{
+    // this gets called for each animation on every time step
+    // progress will start at 0.0 and end at 1.0
+    // we use the blend function on the RgbColor to mix
+    // color based on the progress given to us in the animation
+    RgbColor updatedColor = RgbColor::LinearBlend(
+        animationState[param.index].StartingColor,
+        animationState[param.index].EndingColor,
+        param.progress);
+    // apply the color to the strip
+    pixel.SetPixelColor(animationState[param.index].IndexPixel,
+        colorGamma.Correct(updatedColor));
+}
+
+void LoopAnimUpdate(const AnimationParam& param)
+{
+    // wait for this animation to complete,
+    // we are using it as a timer of sorts
+    if (param.state == AnimationState_Completed)
+    {
+        // done, time to restart this position tracking animation/timer
+        animations.RestartAnimation(param.index);
+
+        // pick the next pixel inline to start animating
+        //
+        frontPixel = (frontPixel + 1) % PixelCount; // increment and wrap
+        if (frontPixel == 0)
+        {
+            // we looped, lets pick a new front color
+            frontColor = HslColor(random(360) / 360.0f, 1.0f, 0.25f);
+        }
+
+        uint16_t indexAnim;
+        // do we have an animation available to use to animate the next front pixel?
+        // if you see skipping, then either you are going to fast or need to increase
+        // the number of animation channels
+        if (animations.NextAvailableAnimation(&indexAnim, 1))
+        {
+            animationState[indexAnim].StartingColor = frontColor;
+            animationState[indexAnim].EndingColor = RgbColor(0, 0, 0);
+            animationState[indexAnim].IndexPixel = frontPixel;
+
+            animations.StartAnimation(indexAnim, PixelFadeDuration, FadeOutAnimUpdate);
+        }
+    }
+}
+
+// ---------- WEB SERVER COMPONENT ----------
+ESP8266WebServer web(80);
+
+void route_allo() {
+  web.send(200, "text/plain", "Hello from esp8266!");
+}
+
+void route_notFound() {
+  String message = "Resource Not Found\n\n";
+  message += "URI: ";
+  message += web.uri();
+  message += "\nMethod: ";
+  message += (web.method() == HTTP_GET)?"GET":"POST";
+  message += "\nArguments: ";
+  message += web.args();
+  message += "\n";
+  for (uint8_t i=0; i<web.args(); i++){
+    message += " " + web.argName(i) + ": " + web.arg(i) + "\n";
+  }
+  web.send(404, "text/plain", message);
+}
+
+void route_v1_isSetupMode() {
+  char outputBuffer[2048];
+
+  uint outputLen;
+  StaticJsonBuffer<JSON_BUFF_SIZE> buff;
+  JsonObject& root = buff.createObject();
+
+  root["status"] = "OK";
+  root["data"] = setupMode;
+
+  outputLen = root.prettyPrintTo(outputBuffer, sizeof(outputBuffer)-1);
+  outputBuffer[outputLen] = '\0';
+
+  web.send(200, "application/json", temp);
+}
+
+void route_v1_setWiFiAP() {
+
+}
+
+void setupModeWeb() {
+  if (MDNS.begin("esp8266")) {
+    Serial.println("MDNS responder started");
+  }
+
+  web.on("/", route_allo);
+  web.on("/api/v1/setup/isSetupMode", HTTP_GET, route_v1_isSetupMode);
+  // web.on("/api/v1/setup/setWiFiAP", HTTPMethod::HTTP_POST, route_v1_setWiFiAP);
+
+  web.onNotFound(route_notFound);
+
+  //web.begin();
+  Serial.println("HTTP server started");
+}
+
+void setupProductionWeb() {
+  if (MDNS.begin("esp8266")) {
+    Serial.println("MDNS responder started");
+  }
+
+  web.on("/", route_allo);
+  web.on("/api/v1/setup/isSetupMode", HTTP_GET, route_v1_isSetupMode);
+  // web.on("/api/v1/setup/setWiFiAP", HTTPMethod::HTTP_POST, route_v1_setWiFiAP);
+
+  web.onNotFound(route_notFound);
+
+  // web.begin();
+  Serial.println("HTTP server started");
+}
+
+// ---------- WEB SERVER COMPONENT ----------
+
+// ---------- FADE IN OUT ANIMATION INIT ----------
 
 void setup() {
     // ---------- BADGE INITIALIZATION - DO NOT MODIFY ----------
@@ -353,6 +525,9 @@ void setup() {
     // Initialize the neopixel
     pixel.Begin();
     pixel.Show();
+
+    // Set random seed for animations
+    SetRandomSeed();
 
     setupMode = false;
     connected = false;
@@ -376,7 +551,7 @@ void setup() {
     if(!setupMode && (file = SPIFFS.open(STR_FILE_CONF, "r"))) {
         size = file.readBytes(temp, file.size());
         if(size == file.size()) {
-            
+
             // Parse the badge configuration
             temp[size] = '\0';
             StaticJsonBuffer<JSON_BUFF_SIZE> buff;
@@ -406,7 +581,7 @@ void setup() {
             else {
                 enableSetupMode("Badge conf invalid");
             }
-        } 
+        }
         else {
             enableSetupMode("Badge conf not found");
         }
@@ -417,6 +592,8 @@ void setup() {
     updateColor(&(badge.color), 0);
     pixel.ClearTo(badge.color);
     pixel.Show();
+
+    animations.StartAnimation(0, NextPixelMoveDuration, LoopAnimUpdate);
 
     // ---------- BADGE CONFIGURATION - CAN BE REMOVED ----------
 
@@ -458,7 +635,7 @@ void setup() {
                     WiFi.begin(ssid, pass);
                     ulong start = millis();
                     uint  count = 0;
-                    while(!(connected = (WiFi.status() == WL_CONNECTED)) && 
+                    while(!(connected = (WiFi.status() == WL_CONNECTED)) &&
                           (millis()-start) < WIFI_TIMEOUT) {
                         if((count = (count + 1) % 4) == 3) {
                             oled.print('.');
@@ -468,7 +645,7 @@ void setup() {
                     }
 
                     // If we're still not connected, use setup mode
-                    if(!connected) enableSetupMode("Unable to connect");
+                    if(!connected) enableSetupMode("Unable to connect WiFi");
                 }
                 else {
                     enableSetupMode("SSID unset");
@@ -494,10 +671,16 @@ void setup() {
 
         // Start the UDP server
         udp.beginMulticast(WiFi.localIP(), NET_GROUP, NET_PORT);
+
+        // Start the web server (production mode)
+        setupProductionWeb();
     }
     // If unable to connect to the configured station, use AP mode
     else {
         runSetupMode();
+
+        // Start the web server (setup mode)
+        setupModeWeb();
     }
 
     // Setup OTA updates
@@ -509,11 +692,15 @@ void setup() {
 }
 
 void loop() {
+    // PIXEL ANIMATION
+    animations.UpdateAnimations();
+    pixel.Show();
+
     // Handle OTA requests
     ArduinoOTA.handle();
-    
-    // Setup should only handle OTA requests
-    if(setupMode) return yield();
+
+    // Handle web requests
+    web.handleClient();
 
     // ---------- USER CODE GOES HERE ----------
 
@@ -524,6 +711,9 @@ void loop() {
     handleRequests();
 
     // ---------- USER CODE GOES HERE ----------
+
+    // Setup should only handle OTA requests
+    // if(setupMode) return yield();
 
     // Let the ESP do any other background things
     yield();
